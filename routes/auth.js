@@ -21,48 +21,137 @@ const storage = multer.diskStorage({
     }
 });
 
-const upload = multer({ storage: storage });
+const upload = multer({
+  storage: multer.memoryStorage()
+});
+
+const uploadProfileImage = async (file, userId) => {
+  if (!file) throw new Error("No file provided for upload");
+  if (!file.buffer) throw new Error("File buffer is missing");
+
+  const fileExt = file.originalname.split('.').pop();
+  const fileName = `${userId}-${Date.now()}.${fileExt}`;
+  const filePath = `agents/${fileName}`;
+
+  const { error } = await supabase.storage
+    .from('profiles')
+    .upload(filePath, file.buffer, {
+      contentType: file.mimetype,
+      upsert: true,
+    });
+
+  if (error) throw error;
+
+  const { data } = supabase.storage
+    .from('profiles')
+    .getPublicUrl(filePath);
+
+  return data.publicUrl;
+};
+
 
 // REGISTER AGENT
-router.post('/register/agent', upload.fields([{ name: 'profile_photo', maxCount: 1 }, { name: 'cnic_document', maxCount: 1 }]), async (req, res) => {
-    const { name, email, password, phone, cnic, territory, terms_accepted } = req.body;
+router.post(
+  '/register/agent',
+  upload.fields([
+    { name: 'profile_photo', maxCount: 1 },
+    { name: 'residential_letter', maxCount: 1 }
+  ]),
+  async (req, res) => {
+    console.log("REQ FILES:", req.files); // <- debug
+    console.log("REQ BODY:", req.body);
 
-    // Hash password
-    const hashedPassword = bcrypt.hashSync(password, 8);
-
-    // Get file paths
-    const profile_photo = req.files['profile_photo'] ? req.files['profile_photo'][0].filename : null;
-    const cnic_document = req.files['cnic_document'] ? req.files['cnic_document'][0].filename : null;
-
-    const termsAcceptedBool = terms_accepted === 'true' || terms_accepted === true;
+    const { name, email, password, phone, territory, terms_accepted } = req.body;
+    const fullPhone = phone.startsWith('+') ? phone : `+92${phone}`;
 
     try {
-        const { data, error } = await supabase
-            .from('agents')
-            .insert([
-                {
-                    name,
-                    email,
-                    password: hashedPassword,
-                    phone,
-                    cnic,
-                    territory,
-                    status: 'Pending',
-                    profile_photo,
-                    cnic_document,
-                    terms_accepted: termsAcceptedBool
-                }
-            ])
-            .select();
+      // 1️⃣ Hash Password
+      const hashedPassword = bcrypt.hashSync(password, 8);
 
-        if (error) throw error;
+      // 2️⃣ Upload profile photo
+      let profile_photo_url = null;
+      if (req.files?.profile_photo?.[0]) {
+        const file = req.files.profile_photo[0];
+        const fileExt = file.originalname.split('.').pop();
+        const fileName = `${email}-profile-${Date.now()}.${fileExt}`;
+        const filePath = `agents/${fileName}`;
 
-        res.status(201).json({ message: 'Agent registered successfully. Pending Admin Approval.', id: data[0].id });
+        const { data, error: uploadError } = await supabase.storage
+          .from('profiles')
+          .upload(filePath, file.buffer, {
+            contentType: file.mimetype,
+            upsert: true,
+          });
+
+        if (uploadError) throw uploadError;
+
+        const { data: urlData } = supabase.storage
+          .from('profiles')
+          .getPublicUrl(filePath);
+
+        profile_photo_url = urlData.publicUrl;
+      }
+
+      // 3️⃣ Upload residential letter
+      let residential_letter_url = null;
+      if (req.files?.residential_letter?.[0]) {
+        const file = req.files.residential_letter[0];
+        const fileExt = file.originalname.split('.').pop();
+        const fileName = `${email}-residential-${Date.now()}.${fileExt}`;
+        const filePath = `residential_letters/${fileName}`; // alag bucket folder
+
+        const { data, error: uploadError } = await supabase.storage
+          .from('residential_letters') // Make sure bucket exists
+          .upload(filePath, file.buffer, {
+            contentType: file.mimetype,
+            upsert: true,
+          });
+
+        if (uploadError) throw uploadError;
+
+        const { data: urlData } = supabase.storage
+          .from('residential_letters')
+          .getPublicUrl(filePath);
+
+        residential_letter_url = urlData.publicUrl;
+      }
+
+      const { owner_name = 'Unknown', business_name = '', address = '' } = req.body;
+
+      // 4️⃣ Insert into Supabase
+      const { data, error } = await supabase
+        .from('agents')
+        .insert([
+          {
+            name,
+            email,
+            password: hashedPassword,
+            phone: fullPhone,
+            territory,
+            status: 'Pending',
+            profile_photo: profile_photo_url,
+            residential_letter: residential_letter_url, // New field
+            terms_accepted: terms_accepted === 'true',
+            owner_name: owner_name || 'Unknown',
+            business_name: business_name || '',
+            address: address || ''
+          }
+        ])
+        .select();
+
+      if (error) {
+        console.error("Supabase Insert Error:", error);
+        return res.status(400).json({ error: error.message });
+      }
+
+      res.status(201).json({ message: 'Agent registered successfully', user: data[0] });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error registering agent', details: err.message });
+      console.error("Register Agent Error:", err);
+      res.status(500).json({ error: 'Server error during registration' });
     }
-});
+  }
+);
+
 
 // REGISTER CUSTOMER
 router.post('/register/customer', async (req, res) => {
@@ -131,38 +220,56 @@ router.post('/register/customer', async (req, res) => {
 
 // LOGIN (Generic)
 router.post('/login', async (req, res) => {
-    const { email, password, role } = req.body;
+  const { email, password, role } = req.body;
 
-    let table = '';
-    if (role === 'agent') table = 'agents';
-    else if (role === 'customer') table = 'customers';
-    else if (role === 'admin') table = 'admins';
-    else return res.status(400).json({ error: 'Invalid role' });
+  console.log('Backend req.body:', req.body);
 
-    try {
-        const { data: user, error } = await supabase
-            .from(table)
-            .select('*')
-            .eq('email', email)
-            .single();
+  if (!email || !password || !role) {
+    return res.status(400).json({ error: 'Email, password and role are required' });
+  }
 
-        if (error || !user) return res.status(404).json({ error: 'User not found' });
+  const emailLower = email.trim().toLowerCase();
 
-        const passwordIsValid = bcrypt.compareSync(password, user.password);
-        if (!passwordIsValid) return res.status(401).json({ error: 'Invalid password' });
+  let table = '';
+  if (role === 'agent') table = 'agents';
+  else if (role === 'customer') table = 'customers';
+  else if (role === 'admin') table = 'admins';
+  else return res.status(400).json({ error: 'Invalid role' });
 
-        if (role === 'agent' && user.status !== 'Active') {
-            return res.status(403).json({ error: 'Account is pending approval. Please contact admin.' });
-        }
+  try {
+    const { data: user, error } = await supabase
+      .from(table)
+      .select('*')
+      .eq('email', emailLower)
+      .single();
 
-        const token = jwt.sign({ id: user.id, role }, SECRET_KEY, { expiresIn: '24h' });
-
-        res.status(200).json({ auth: true, token: token, user: user });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Server error' });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
+
+    const passwordIsValid =
+  role === 'admin'
+    ? password === user.password // plain text compare
+    : bcrypt.compareSync(password, user.password);
+
+if (!passwordIsValid) {
+  return res.status(401).json({ error: 'Invalid email or password' });
+}
+
+
+    if (role === 'agent' && user.status !== 'Active') {
+      return res.status(403).json({ error: 'Account pending approval' });
+    }
+
+    const token = jwt.sign({ id: user.id, role }, SECRET_KEY, { expiresIn: '24h' });
+
+    res.status(200).json({ auth: true, token, user });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
+
 
 // FORGOT PASSWORD - SEND OTP
 router.post('/forgot-password', async (req, res) => {
