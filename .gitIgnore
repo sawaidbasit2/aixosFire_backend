@@ -1,0 +1,13 @@
+# Node modules
+node_modules/
+frontend/node_modules/
+
+# Environment files
+.env
+
+# SQLite or other local DB
+*.sqlite
+
+# Build / cache
+/dist
+/build
