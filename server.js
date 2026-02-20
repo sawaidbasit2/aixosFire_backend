@@ -21,13 +21,14 @@ const agentsRoutes = require('./routes/agents');
 const customersRoutes = require('./routes/customers');
 const servicesRoutes = require('./routes/services');
 const adminRoutes = require('./routes/admin');
-
+const chatRoutes = require('./routes/chat');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/agents', agentsRoutes);
 app.use('/api/customers', customersRoutes);
 app.use('/api/services', servicesRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api', chatRoutes); // Mounts /api/queries and /api/customers/:id/header
 
 
 app.listen(PORT, () => {
