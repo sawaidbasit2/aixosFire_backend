@@ -41,7 +41,7 @@ const chatController = {
         }
 
         // Validate that the userRole is one we expect
-        const validRoles = ['customer', 'agent', 'admin'];
+        const validRoles = ['customer', 'agent', 'admin', 'partner'];
         if (!validRoles.includes(userRole)) {
             return res.status(403).json({ error: 'Invalid user role for sending messages.' });
         }
@@ -57,7 +57,7 @@ const chatController = {
             const newMessage = await chatService.createMessage({
                 extinguisher_id: extinguisherId,
                 sender_id: userId,
-                sender_type: userRole, // 'customer', 'agent', or 'admin'
+                sender_type: userRole, // 'customer', 'agent', 'admin', or 'partner'
                 content: content.trim()
             });
 
@@ -83,6 +83,25 @@ const chatController = {
         } catch (err) {
             console.error('Error fetching customer header:', err);
             res.status(500).json({ error: 'Failed to fetch customer info.' });
+        }
+    },
+
+    /**
+     * GET /api/partners/:partnerId/header
+     * Returns partner info for the frontend chat header (Agent ↔ Partner chat UI).
+     */
+    getPartnerHeader: async (req, res) => {
+        const { partnerId } = req.params;
+
+        try {
+            const partnerInfo = await chatService.getPartnerHeaderInfo(partnerId);
+            if (!partnerInfo) {
+                return res.status(404).json({ error: 'Partner not found.' });
+            }
+            res.status(200).json(partnerInfo);
+        } catch (err) {
+            console.error('Error fetching partner header:', err);
+            res.status(500).json({ error: 'Failed to fetch partner info.' });
         }
     }
 };

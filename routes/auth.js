@@ -12,13 +12,13 @@ const SECRET_KEY = process.env.JWT_SECRET || 'super_secret_key_fire_marketplace'
 
 // Configure Multer Storage
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, 'uploads/');
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-    }
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
 });
 
 const upload = multer({
@@ -155,67 +155,98 @@ router.post(
 
 // REGISTER CUSTOMER
 router.post('/register/customer', async (req, res) => {
-    const { business_name, owner_name, email, password, phone, address, business_type } = req.body;
-    const QRCode = require('qrcode');
-    const fs = require('fs');
+  const { business_name, owner_name, email, password, phone, address, business_type } = req.body;
+  const QRCode = require('qrcode');
+  const fs = require('fs');
 
+  const hashedPassword = bcrypt.hashSync(password, 8);
+
+  // Handle Optional Email
+  let finalEmail = email;
+  if (!finalEmail || finalEmail.trim() === '') {
+    finalEmail = `no-email-${Date.now()}-${Math.floor(Math.random() * 1000)}@aixos-placeholder.com`;
+  }
+
+  try {
+    const { data: customerData, error: customerError } = await supabase
+      .from('customers')
+      .insert([
+        { business_name, owner_name, email: finalEmail, password: hashedPassword, phone, address, business_type }
+      ])
+      .select();
+
+    if (customerError) throw customerError;
+
+    const customerId = customerData[0].id;
+
+    // Generate QR Code
+    const qrDir = path.join(__dirname, '../uploads/qrcodes');
+    if (!fs.existsSync(qrDir)) {
+      fs.mkdirSync(qrDir, { recursive: true });
+    }
+
+    const qrContent = JSON.stringify({
+      id: customerId,
+      type: 'customer',
+      name: business_name,
+      url: `https://app.aixos.com/customer/${customerId}`
+    });
+
+    const qrFileName = `qr-customer-${customerId}-${Date.now()}.png`;
+    const qrFilePath = path.join(qrDir, qrFileName);
+
+    await QRCode.toFile(qrFilePath, qrContent, {
+      color: {
+        dark: '#000000',
+        light: '#0000'
+      }
+    });
+
+    const qrUrl = `/uploads/qrcodes/${qrFileName}`;
+
+    const { error: updateError } = await supabase
+      .from('customers')
+      .update({ qr_code_url: qrUrl })
+      .eq('id', customerId);
+
+    if (updateError) console.error("QR Update Error:", updateError);
+
+    res.status(201).json({ message: 'Customer registered successfully', id: customerId, qr_code_url: qrUrl });
+  } catch (err) {
+    console.error("Register Error:", err);
+    res.status(500).json({ error: 'Error registering customer', details: err.message });
+  }
+});
+
+// REGISTER PARTNER
+router.post('/register/partner', async (req, res) => {
+  const { business_name, owner_name, email, password, phone, address } = req.body;
+
+  if (!email || !password || !business_name) {
+    return res.status(400).json({ error: 'Business name, email, and password are required' });
+  }
+
+  try {
     const hashedPassword = bcrypt.hashSync(password, 8);
+    const { data, error } = await supabase
+      .from('partners')
+      .insert([
+        { business_name, owner_name, email: email.toLowerCase().trim(), password: hashedPassword, phone, address, status: 'Active' }
+      ])
+      .select();
 
-    // Handle Optional Email
-    let finalEmail = email;
-    if (!finalEmail || finalEmail.trim() === '') {
-        finalEmail = `no-email-${Date.now()}-${Math.floor(Math.random() * 1000)}@aixos-placeholder.com`;
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(400).json({ error: 'Email already exists' });
+      }
+      throw error;
     }
 
-    try {
-        const { data: customerData, error: customerError } = await supabase
-            .from('customers')
-            .insert([
-                { business_name, owner_name, email: finalEmail, password: hashedPassword, phone, address, business_type }
-            ])
-            .select();
-
-        if (customerError) throw customerError;
-
-        const customerId = customerData[0].id;
-
-        // Generate QR Code
-        const qrDir = path.join(__dirname, '../uploads/qrcodes');
-        if (!fs.existsSync(qrDir)) {
-            fs.mkdirSync(qrDir, { recursive: true });
-        }
-
-        const qrContent = JSON.stringify({
-            id: customerId,
-            type: 'customer',
-            name: business_name,
-            url: `https://app.aixos.com/customer/${customerId}`
-        });
-
-        const qrFileName = `qr-customer-${customerId}-${Date.now()}.png`;
-        const qrFilePath = path.join(qrDir, qrFileName);
-
-        await QRCode.toFile(qrFilePath, qrContent, {
-            color: {
-                dark: '#000000',
-                light: '#0000'
-            }
-        });
-
-        const qrUrl = `/uploads/qrcodes/${qrFileName}`;
-
-        const { error: updateError } = await supabase
-            .from('customers')
-            .update({ qr_code_url: qrUrl })
-            .eq('id', customerId);
-
-        if (updateError) console.error("QR Update Error:", updateError);
-
-        res.status(201).json({ message: 'Customer registered successfully', id: customerId, qr_code_url: qrUrl });
-    } catch (err) {
-        console.error("Register Error:", err);
-        res.status(500).json({ error: 'Error registering customer', details: err.message });
-    }
+    res.status(201).json({ message: 'Partner registered successfully', id: data[0].id });
+  } catch (err) {
+    console.error("Register Partner Error:", err);
+    res.status(500).json({ error: 'Error registering partner', details: err.message });
+  }
 });
 
 // LOGIN (Generic)
@@ -234,6 +265,7 @@ router.post('/login', async (req, res) => {
   if (role === 'agent') table = 'agents';
   else if (role === 'customer') table = 'customers';
   else if (role === 'admin') table = 'admins';
+  else if (role === 'partner') table = 'partners';
   else return res.status(400).json({ error: 'Invalid role' });
 
   try {
@@ -248,13 +280,13 @@ router.post('/login', async (req, res) => {
     }
 
     const passwordIsValid =
-  role === 'admin'
-    ? password === user.password // plain text compare
-    : bcrypt.compareSync(password, user.password);
+      role === 'admin'
+        ? password === user.password // plain text compare
+        : bcrypt.compareSync(password, user.password);
 
-if (!passwordIsValid) {
-  return res.status(401).json({ error: 'Invalid email or password' });
-}
+    if (!passwordIsValid) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
 
 
     if (role === 'agent' && user.status !== 'Active') {
@@ -273,58 +305,58 @@ if (!passwordIsValid) {
 
 // FORGOT PASSWORD - SEND OTP
 router.post('/forgot-password', async (req, res) => {
-    const { email } = req.body;
+  const { email } = req.body;
 
-    try {
-        // Use Supabase Auth to send the reset password email/OTP
-        const { error } = await supabase.auth.resetPasswordForEmail(email);
+  try {
+    // Use Supabase Auth to send the reset password email/OTP
+    const { error } = await supabase.auth.resetPasswordForEmail(email);
 
-        if (error) throw error;
+    if (error) throw error;
 
-        res.status(200).json({ message: 'OTP sent to your email.' });
-    } catch (err) {
-        console.error('Supabase Forgot Password Error:', err);
-        res.status(500).json({ error: 'Error processing forgot password request', details: err.message });
-    }
+    res.status(200).json({ message: 'OTP sent to your email.' });
+  } catch (err) {
+    console.error('Supabase Forgot Password Error:', err);
+    res.status(500).json({ error: 'Error processing forgot password request', details: err.message });
+  }
 });
 
 // VERIFY OTP & RESET PASSWORD
 router.post('/reset-password', async (req, res) => {
-    const { email, otp, newPassword, role } = req.body;
+  const { email, otp, newPassword, role } = req.body;
 
-    let table = '';
-    if (role === 'agent') table = 'agents';
-    else if (role === 'customer') table = 'customers';
-    else if (role === 'admin') table = 'admins';
-    else return res.status(400).json({ error: 'Invalid role' });
+  let table = '';
+  if (role === 'agent') table = 'agents';
+  else if (role === 'customer') table = 'customers';
+  else if (role === 'admin') table = 'admins';
+  else return res.status(400).json({ error: 'Invalid role' });
 
-    try {
-        // 1. Verify OTP with Supabase Auth
-        const { data, error: verifyError } = await supabase.auth.verifyOtp({
-            email,
-            token: otp,
-            type: 'recovery'
-        });
+  try {
+    // 1. Verify OTP with Supabase Auth
+    const { data, error: verifyError } = await supabase.auth.verifyOtp({
+      email,
+      token: otp,
+      type: 'recovery'
+    });
 
-        if (verifyError) {
-            console.error('OTP Verification Error:', verifyError);
-            return res.status(400).json({ error: 'Invalid or expired OTP' });
-        }
-
-        // 2. Update Password in custom table
-        const hashedPassword = bcrypt.hashSync(newPassword, 8);
-        const { error: updateError } = await supabase
-            .from(table)
-            .update({ password: hashedPassword })
-            .eq('email', email);
-
-        if (updateError) throw updateError;
-
-        res.status(200).json({ message: 'Password reset successful.' });
-    } catch (err) {
-        console.error('Reset Password Error:', err);
-        res.status(500).json({ error: 'Error resetting password', details: err.message });
+    if (verifyError) {
+      console.error('OTP Verification Error:', verifyError);
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
     }
+
+    // 2. Update Password in custom table
+    const hashedPassword = bcrypt.hashSync(newPassword, 8);
+    const { error: updateError } = await supabase
+      .from(table)
+      .update({ password: hashedPassword })
+      .eq('email', email);
+
+    if (updateError) throw updateError;
+
+    res.status(200).json({ message: 'Password reset successful.' });
+  } catch (err) {
+    console.error('Reset Password Error:', err);
+    res.status(500).json({ error: 'Error resetting password', details: err.message });
+  }
 });
 
 

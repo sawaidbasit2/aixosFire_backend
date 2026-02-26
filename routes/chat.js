@@ -8,11 +8,12 @@ const { verifyToken } = require('../middleware/auth');
  * Each extinguisher record in the system acts as a service query.
  */
 
-// Message Routes
+// Message Routes — supports sender_type: 'agent' | 'customer' | 'partner' | 'admin'
 router.get('/extinguishers/:id/messages', verifyToken, chatController.getMessages);
 router.post('/extinguishers/:id/messages', verifyToken, chatController.sendMessage);
 
-// Customer Header Route
+// Chat Header Routes (for frontend chat UI)
 router.get('/customers/:customerId/header', verifyToken, chatController.getCustomerHeader);
+router.get('/partners/:partnerId/header', verifyToken, chatController.getPartnerHeader);
 
 module.exports = router;
