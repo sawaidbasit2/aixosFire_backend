@@ -23,6 +23,8 @@ const servicesRoutes = require('./routes/services');
 const adminRoutes = require('./routes/admin');
 const chatRoutes = require('./routes/chat');
 const partnersRoutes = require('./routes/partners');
+const inquiryRoutes = require('./routes/inquiryRoutes');
+const maintenanceRoutes = require('./routes/maintenanceRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/agents', agentsRoutes);
@@ -30,6 +32,9 @@ app.use('/api/customers', customersRoutes);
 app.use('/api/services', servicesRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/partners', partnersRoutes);
+app.use('/api/partner', partnersRoutes); // Added singular mount
+app.use('/api', maintenanceRoutes); // PATCH /inquiries/:id/accept, site-assessments, inspections
+app.use('/api', inquiryRoutes); // Mounts /api/inquiries, /api/inquiry-items, etc.
 app.use('/api', chatRoutes); // Mounts /api/queries and /api/customers/:id/header
 
 

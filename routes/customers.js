@@ -1,6 +1,89 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../supabase');
+const { verifyToken } = require('../middleware/auth');
+
+/**
+ * Customers table uses location_lat / location_lng (not lat / lng).
+ * Accept either naming convention from clients and write only DB column names.
+ */
+function normalizeCustomerLocation(body) {
+    const rawLat = body.location_lat != null ? body.location_lat : body.lat;
+    const rawLng = body.location_lng != null ? body.location_lng : body.lng;
+    if (rawLat == null || rawLng == null) {
+        return { error: 'Provide location_lat and location_lng (or legacy lat and lng).' };
+    }
+    const location_lat = Number(rawLat);
+    const location_lng = Number(rawLng);
+    if (!Number.isFinite(location_lat) || !Number.isFinite(location_lng)) {
+        return { error: 'location values must be valid numbers.' };
+    }
+    return { location_lat, location_lng };
+}
+
+// PATCH /api/customers/:id/location — preferred path (avoids direct PostgREST lat/lng mismatch)
+router.patch('/:id/location', verifyToken, async (req, res) => {
+    const customerId = req.params.id;
+    const { id: tokenUserId, role } = req.user;
+
+    if (role === 'customer' && tokenUserId !== customerId) {
+        return res.status(403).json({
+            success: false,
+            data: null,
+            error: 'You can only update your own location.'
+        });
+    }
+    if (role !== 'customer' && role !== 'admin') {
+        return res.status(403).json({
+            success: false,
+            data: null,
+            error: 'Access denied.'
+        });
+    }
+
+    const coords = normalizeCustomerLocation(req.body);
+    if (coords.error) {
+        return res.status(400).json({
+            success: false,
+            data: null,
+            error: coords.error
+        });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('customers')
+            .update({
+                location_lat: coords.location_lat,
+                location_lng: coords.location_lng
+            })
+            .eq('id', customerId)
+            .select('id, location_lat, location_lng')
+            .maybeSingle();
+
+        if (error) throw error;
+        if (!data) {
+            return res.status(404).json({
+                success: false,
+                data: null,
+                error: 'Customer not found.'
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data,
+            error: null
+        });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({
+            success: false,
+            data: null,
+            error: err.message || 'Failed to update location'
+        });
+    }
+});
 
 // GET Customer Dashboard (Inventory + Pending Services)
 router.get('/:id/dashboard', async (req, res) => {
@@ -108,19 +191,47 @@ router.post('/inventory', async (req, res) => {
     }
 });
 
-// UPDATE LOCATION
+// UPDATE LOCATION (legacy POST — same column mapping as PATCH)
 router.post('/location', async (req, res) => {
-    const { id, lat, lng } = req.body;
+    const { id } = req.body;
+    if (!id) {
+        return res.status(400).json({
+            success: false,
+            data: null,
+            error: 'id is required.'
+        });
+    }
+
+    const coords = normalizeCustomerLocation(req.body);
+    if (coords.error) {
+        return res.status(400).json({
+            success: false,
+            data: null,
+            error: coords.error
+        });
+    }
+
     try {
         const { error } = await supabase
             .from('customers')
-            .update({ location_lat: lat, location_lng: lng })
+            .update({
+                location_lat: coords.location_lat,
+                location_lng: coords.location_lng
+            })
             .eq('id', id);
         if (error) throw error;
-        res.json({ message: 'Location updated' });
+        return res.status(200).json({
+            success: true,
+            data: { id, location_lat: coords.location_lat, location_lng: coords.location_lng },
+            error: null
+        });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'DB Error' });
+        return res.status(500).json({
+            success: false,
+            data: null,
+            error: err.message || 'DB Error'
+        });
     }
 });
 
