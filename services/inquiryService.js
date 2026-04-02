@@ -199,7 +199,9 @@ class InquiryService {
                     visit_id: inquiryData.visit_id,
                     type: inquiryData.type,
                     status: 'pending',
-                    priority: inquiryData.priority || 'Medium'
+                    priority: inquiryData.priority || 'Medium',
+                    performed_by: inquiryData.performed_by || 'Agent',
+                    follow_up_date: inquiryData.follow_up_date || null
                 }])
                 .select()
                 .single();
@@ -225,10 +227,9 @@ class InquiryService {
                             type: item.type || null,
                             capacity: item.capacity || null,
                             condition: item.condition || 'Good',
-                            firefighting_system: item.firefighting_system || null,
-                            fire_alarm_system: item.fire_alarm_system || null,
-                            pump_type: item.pump_type || null,
-                            unit: item.unit || 'Pieces'
+                            system: item.system || null,
+                            unit: item.unit || 'Pieces',
+                            expiry_date: item.expiry_date || null
                         }])
                         .select()
                         .single();
@@ -250,15 +251,16 @@ class InquiryService {
                     quantity: item.quantity || 1,
                     price: item.price || 0,
                     unit: item.unit || 'Pieces',
-                    firefighting_system: item.firefighting_system || null,
-                    fire_alarm_system: item.fire_alarm_system || null,
-                    pump_type: item.pump_type || null,
+                    system: item.system || null,
                     condition: item.condition || 'Good',
                     status: item.status || 'Active',
                     catalog_no: item.catalog_no || null,
                     maintenance_notes: item.maintenance_notes || null,
                     maintenance_voice_url: item.maintenance_voice_url || null,
                     maintenance_unit_photo_url: item.maintenance_unit_photo_url || null,
+                    performed_by: item.performed_by || inquiryData.performed_by || 'Agent',
+                    expiry_date: item.expiry_date || null,
+                    follow_up_date: item.follow_up_date || inquiryData.follow_up_date || null,
                     is_sub_unit: item.is_sub_unit || false,
                     query_status: 'Active'
                 };
