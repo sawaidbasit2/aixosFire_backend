@@ -103,6 +103,78 @@ const chatController = {
             console.error('Error fetching partner header:', err);
             res.status(500).json({ error: 'Failed to fetch partner info.' });
         }
+    },
+
+    /**
+     * POST /api/messages
+     */
+    sendDirectMessage: async (req, res) => {
+        const { sender_id, receiver_id, receiver_role, inquiry_id, message, message_type = 'text' } = req.body;
+        
+        if (!sender_id || !receiver_id || !message) {
+            return res.status(400).json({ success: false, data: null, error: 'sender_id, receiver_id, and message are required.' });
+        }
+
+        try {
+            // Map the unified `message` attribute to the existing DB schema `content` column.
+            const newMsg = await chatService.createDirectMessage({
+                sender_id: String(sender_id),
+                receiver_id: String(receiver_id),
+                receiver_role: receiver_role || null, // Will fallback in service if null
+                inquiry_id: inquiry_id || null,
+                content: message.trim(),
+                message_type,
+                status: 'sent',
+                sender_type: req.user.role // Derive from token
+            });
+
+            res.status(201).json({ success: true, data: newMsg, error: null });
+        } catch (err) {
+            console.error('[sendDirectMessage] Error:', err);
+            res.status(500).json({ success: false, data: null, error: err.message || 'Failed to send message.' });
+        }
+    },
+
+    /**
+     * GET /api/messages
+     */
+    getDirectMessagesHistory: async (req, res) => {
+        const { sender_id, receiver_id, inquiry_id } = req.query;
+
+        if (!sender_id || !receiver_id) {
+            return res.status(400).json({ success: false, data: null, error: 'sender_id and receiver_id are required in query params.' });
+        }
+
+        try {
+            const messages = await chatService.getDirectMessages(sender_id, receiver_id, inquiry_id);
+            res.status(200).json({ success: true, data: messages, error: null });
+        } catch (err) {
+            console.error('[getDirectMessagesHistory] Error:', err);
+            res.status(500).json({ success: false, data: null, error: err.message || 'Failed to fetch messages.' });
+        }
+    },
+
+    /**
+     * PATCH /api/messages/status
+     */
+    updateMessageStatus: async (req, res) => {
+        const { message_id, status } = req.body;
+
+        if (!message_id || !status) {
+            return res.status(400).json({ success: false, data: null, error: 'message_id and status are required.' });
+        }
+
+        if (status !== 'delivered' && status !== 'read') {
+            return res.status(400).json({ success: false, data: null, error: 'Status must be "delivered" or "read".' });
+        }
+
+        try {
+            const updated = await chatService.updateMessageStatus(message_id, status);
+            res.status(200).json({ success: true, data: updated, error: null });
+        } catch (err) {
+            console.error('[updateMessageStatus] Error:', err);
+            res.status(500).json({ success: false, data: null, error: err.message || 'Failed to update status.' });
+        }
     }
 };
 

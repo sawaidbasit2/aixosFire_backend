@@ -16,4 +16,9 @@ router.post('/extinguishers/:id/messages', verifyToken, chatController.sendMessa
 router.get('/customers/:customerId/header', verifyToken, chatController.getCustomerHeader);
 router.get('/partners/:partnerId/header', verifyToken, chatController.getPartnerHeader);
 
+// General Chat System (Customer <-> Partner)
+router.get('/messages', verifyToken, chatController.getDirectMessagesHistory);
+router.post('/messages', verifyToken, chatController.sendDirectMessage);
+router.patch('/messages/status', verifyToken, chatController.updateMessageStatus);
+
 module.exports = router;

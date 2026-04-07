@@ -260,8 +260,11 @@ class InquiryService {
                     maintenance_unit_photo_url: item.maintenance_unit_photo_url || null,
                     performed_by: item.performed_by || inquiryData.performed_by || 'Agent',
                     expiry_date: item.expiry_date || null,
-                    follow_up_date: item.follow_up_date || inquiryData.follow_up_date || null,
+                    follow_up_date: item.follow_up_date || null,
+                    follow_up_date_validation: item.follow_up_date_validation || null,
+                    validation_mode: item.validation_mode || 'new',
                     is_sub_unit: item.is_sub_unit || false,
+                    extinguisher_photo: item.extinguisher_photo || null,
                     query_status: 'Active'
                 };
 

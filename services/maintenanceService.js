@@ -1,6 +1,7 @@
 const supabase = require('../supabase');
 
 const INSPECTION_BUCKET = 'inspection-reports';
+const QUOTATION_BUCKET = 'quotations';
 
 /**
  * Maintenance flow: site assessments, inspection reports, inquiry accept.
@@ -62,6 +63,97 @@ class MaintenanceService {
         if (!data) {
             return { ok: false, code: 404, message: 'Inquiry not found.' };
         }
+        return { ok: true, data };
+    }
+
+    /**
+     * Schedule a date for maintenance visit. Partner only.
+     */
+    async scheduleVisit(partnerId, payload) {
+        const { inquiry_id, scheduled_date } = payload;
+        if (!inquiry_id || !scheduled_date) {
+            return { ok: false, code: 400, message: 'inquiry_id and scheduled_date are required.' };
+        }
+
+        const inquiry = await this.getInquiryAccessRow(inquiry_id);
+        if (!inquiry) return { ok: false, code: 404, message: 'Inquiry not found.' };
+        if (!this.partnerOwnsInquiry(inquiry, partnerId)) {
+            return { ok: false, code: 403, message: 'You do not have access to this inquiry.' };
+        }
+
+        const { data, error } = await supabase
+            .from('inquiries')
+            .update({
+                scheduled_date,
+                approval_status: 'pending',
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', inquiry_id)
+            .select()
+            .maybeSingle();
+
+        if (error) throw error;
+        
+        // Notification to customer
+        await supabase.from('notifications').insert({
+            sender_id: String(partnerId),
+            sender_role: 'partner',
+            recipient_id: String(inquiry.customer_id),
+            recipient_role: 'customer',
+            message: `Your site visit is scheduled for ${new Date(scheduled_date).toLocaleString()}. Please review and approve.`,
+            inquiry_id
+        });
+
+        return { ok: true, data };
+    }
+
+    /**
+     * Customer (or partner for testing) approves/rejects scheduled date.
+     */
+    async approveSchedule(userId, role, payload) {
+        const { inquiry_id, status } = payload;
+        if (!inquiry_id || !status) {
+            return { ok: false, code: 400, message: 'inquiry_id and status are required.' };
+        }
+        if (status !== 'approved' && status !== 'rejected') {
+            return { ok: false, code: 400, message: 'Status must be "approved" or "rejected".' };
+        }
+
+        const inquiry = await this.getInquiryAccessRow(inquiry_id);
+        if (!inquiry) return { ok: false, code: 404, message: 'Inquiry not found.' };
+        
+        if (role === 'partner' && !this.partnerOwnsInquiry(inquiry, userId)) {
+            return { ok: false, code: 403, message: 'Access denied.' };
+        }
+        if (role === 'customer' && !this.customerOwnsInquiry(inquiry, userId)) {
+            return { ok: false, code: 403, message: 'Access denied.' };
+        }
+
+        const { data, error } = await supabase
+            .from('inquiries')
+            .update({
+                approval_status: status,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', inquiry_id)
+            .select()
+            .maybeSingle();
+
+        if (error) throw error;
+
+        // Notification to partner
+        const isApproved = status === 'approved';
+        await supabase.from('notifications').insert({
+            sender_id: String(userId),
+            sender_role: role,
+            recipient_id: String(inquiry.partner_id),
+            recipient_role: 'partner',
+            message: isApproved 
+                ? `Customer has approved the schedule for inquiry ${inquiry_id}.`
+                : `Customer has rejected the schedule for inquiry ${inquiry_id}. Please propose a new date.`,
+            inquiry_id
+        });
+
         return { ok: true, data };
     }
 
@@ -202,17 +294,23 @@ class MaintenanceService {
         const path = `${inquiryId}/${Date.now()}_${safeName}`;
         const contentType = file.mimetype || 'application/octet-stream';
 
-        // Validate file type (PDF or Excel)
-        const allowedMimeTypes = [
-            'application/pdf',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'application/vnd.ms-excel'
-        ];
+        // Validate file type (PDF only)
+        const allowedMimeTypes = ['application/pdf'];
         if (!allowedMimeTypes.includes(contentType)) {
             return {
                 ok: false,
                 code: 400,
-                message: 'Invalid file type. Only PDF and Excel files are allowed.'
+                message: 'Invalid file type. Only PDF files are allowed.'
+            };
+        }
+
+        // Validate file size (100MB)
+        const maxSize = 100 * 1024 * 1024;
+        if (file.size > maxSize || (file.buffer && file.buffer.length > maxSize)) {
+            return {
+                ok: false,
+                code: 400,
+                message: 'File size must be less than 100MB'
             };
         }
 
@@ -248,6 +346,133 @@ class MaintenanceService {
             .single();
 
         if (error) throw error;
+        return { ok: true, data };
+    }
+
+    /**
+     * Create quotation: Storage + DB. Partner only.
+     */
+    async createQuotation(partnerId, file, body) {
+        const inquiryId = body.inquiry_id;
+        if (!inquiryId) return { ok: false, code: 400, message: 'inquiry_id is required.' };
+        if (!file || !file.buffer) return { ok: false, code: 400, message: 'file is required.' };
+
+        const inquiry = await this.getInquiryAccessRow(inquiryId);
+        if (!inquiry) return { ok: false, code: 404, message: 'Inquiry not found.' };
+        if (!this.partnerOwnsInquiry(inquiry, partnerId)) return { ok: false, code: 403, message: 'Access denied.' };
+
+        // 1. Upload PDF
+        const safeName = (file.originalname || 'quotation.pdf').replace(/[^\w.\-]+/g, '_');
+        const path = `${inquiryId}/${Date.now()}_${safeName}`;
+        const contentType = 'application/pdf';
+
+        const { error: uploadError } = await supabase.storage
+            .from(QUOTATION_BUCKET)
+            .upload(path, file.buffer, { contentType, upsert: false });
+
+        if (uploadError) {
+            // Check if bucket exists, if not, try creating or just error with helpful message
+            console.error('[MaintenanceService] Quotation upload error:', uploadError);
+            throw uploadError;
+        }
+
+        const { data: urlData } = supabase.storage.from(QUOTATION_BUCKET).getPublicUrl(path);
+        const pdfUrl = urlData?.publicUrl;
+
+        // 2. Insert record
+        const cost = body.estimated_cost ? Number(body.estimated_cost) : null;
+        
+        const { data, error } = await supabase
+            .from('quotations')
+            .upsert({
+                inquiry_id: inquiryId,
+                partner_id: partnerId,
+                customer_id: body.customer_id || inquiry.customer_id,
+                estimated_cost: cost,
+                pdf_url: pdfUrl,
+                status: 'sent',
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'inquiry_id' })
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        // 3. Update inquiry status
+        await supabase.from('inquiries').update({ status: 'quoted' }).eq('id', inquiryId);
+
+        // 4. Notify customer
+        await supabase.from('notifications').insert({
+            sender_id: String(partnerId),
+            sender_role: 'partner',
+            recipient_id: String(inquiry.customer_id),
+            recipient_role: 'customer',
+            message: `A new quotation has been sent for inquiry ${inquiryId}.`,
+            inquiry_id: inquiryId,
+            type: 'quotation',
+            title: 'New Quotation Received'
+        });
+
+        return { ok: true, data };
+    }
+
+    async getQuotationByInquiryId(inquiryId, user) {
+        const { data, error } = await supabase
+            .from('quotations')
+            .select('*')
+            .eq('inquiry_id', inquiryId)
+            .maybeSingle();
+
+        if (error) throw error;
+        return { ok: true, data };
+    }
+
+    async listQuotationsForCustomer(customerId) {
+        const { data, error } = await supabase
+            .from('quotations')
+            .select('*, inquiries(type, status)')
+            .eq('customer_id', customerId)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        return { ok: true, data: data || [] };
+    }
+
+    async updateQuotationStatus(quotationId, status, user) {
+        const { data: existing, error: fetchErr } = await supabase
+            .from('quotations')
+            .select('*')
+            .eq('id', quotationId)
+            .single();
+        
+        if (fetchErr || !existing) return { ok: false, code: 404, message: 'Quotation not found.' };
+
+        // Only owning customer can approve/reject
+        if (user.role === 'customer' && String(existing.customer_id) !== String(user.id)) {
+            return { ok: false, code: 403, message: 'Access denied.' };
+        }
+
+        const { data, error } = await supabase
+            .from('quotations')
+            .update({ status, updated_at: new Date().toISOString() })
+            .eq('id', quotationId)
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        // Notification to partner
+        await supabase.from('notifications').insert({
+            sender_id: String(user.id),
+            sender_role: user.role,
+            recipient_id: String(existing.partner_id),
+            recipient_role: 'partner',
+            message: `Quotation for inquiry ${existing.inquiry_id} has been ${status}.`,
+            inquiry_id: existing.inquiry_id,
+            type: 'quotation_update',
+            title: `Quotation ${status}`
+        });
+
         return { ok: true, data };
     }
 }

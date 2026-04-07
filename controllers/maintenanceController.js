@@ -26,6 +26,38 @@ class MaintenanceController {
         }
     }
 
+    async scheduleVisit(req, res) {
+        const { id: userId, role } = req.user;
+        if (role !== 'partner') {
+            return json(res, 403, false, null, 'Only partners can schedule site visits.');
+        }
+
+        try {
+            const result = await maintenanceService.scheduleVisit(userId, req.body);
+            if (!result.ok) {
+                return json(res, result.code, false, null, result.message);
+            }
+            return json(res, 200, true, result.data, null);
+        } catch (error) {
+            console.error('[MaintenanceController] scheduleVisit:', error);
+            return json(res, 500, false, null, error.message || 'Failed to schedule visit.');
+        }
+    }
+
+    async approveSchedule(req, res) {
+        const { id: userId, role } = req.user;
+        try {
+            const result = await maintenanceService.approveSchedule(userId, role, req.body);
+            if (!result.ok) {
+                return json(res, result.code, false, null, result.message);
+            }
+            return json(res, 200, true, result.data, null);
+        } catch (error) {
+            console.error('[MaintenanceController] approveSchedule:', error);
+            return json(res, 500, false, null, error.message || 'Failed to approve schedule.');
+        }
+    }
+
     async upsertSiteAssessment(req, res) {
         const { id: userId, role } = req.user;
         if (role !== 'partner') {
@@ -96,6 +128,73 @@ class MaintenanceController {
         } catch (error) {
             console.error('[MaintenanceController] createInspection:', error);
             return json(res, 500, false, null, error.message || 'Failed to upload inspection.');
+        }
+    }
+
+    async createQuotation(req, res) {
+        const { id: userId, role } = req.user;
+        if (role !== 'partner') {
+            return json(res, 403, false, null, 'Only partners can submit quotations.');
+        }
+
+        try {
+            const result = await maintenanceService.createQuotation(userId, req.file, req.body || {});
+            if (!result.ok) {
+                return json(res, result.code, false, null, result.message);
+            }
+            return json(res, 201, true, result.data, null);
+        } catch (error) {
+            console.error('[MaintenanceController] createQuotation:', error);
+            return json(res, 500, false, null, error.message || 'Failed to submit quotation.');
+        }
+    }
+
+    async getQuotation(req, res) {
+        const { inquiryId } = req.params;
+        try {
+            const result = await maintenanceService.getQuotationByInquiryId(inquiryId, req.user);
+            if (!result.ok) {
+                return json(res, result.code, false, null, result.message);
+            }
+            return json(res, 200, true, result.data, null);
+        } catch (error) {
+            console.error('[MaintenanceController] getQuotation:', error);
+            return json(res, 500, false, null, error.message || 'Failed to load quotation.');
+        }
+    }
+
+    async listQuotations(req, res) {
+        const { id: userId, role } = req.user;
+        if (role !== 'customer') {
+            return json(res, 403, false, null, 'Only customers can list their quotations.');
+        }
+
+        try {
+            const result = await maintenanceService.listQuotationsForCustomer(userId);
+            if (!result.ok) {
+                return json(res, result.code, false, null, result.message);
+            }
+            return json(res, 200, true, result.data, null);
+        } catch (error) {
+            console.error('[MaintenanceController] listQuotations:', error);
+            return json(res, 500, false, null, error.message || 'Failed to load quotations.');
+        }
+    }
+
+    async updateQuotation(req, res) {
+        const { id } = req.params;
+        const { status } = req.body;
+        if (!status) return json(res, 400, false, null, 'Status is required.');
+
+        try {
+            const result = await maintenanceService.updateQuotationStatus(id, status, req.user);
+            if (!result.ok) {
+                return json(res, result.code, false, null, result.message);
+            }
+            return json(res, 200, true, result.data, null);
+        } catch (error) {
+            console.error('[MaintenanceController] updateQuotation:', error);
+            return json(res, 500, false, null, error.message || 'Failed to update quotation.');
         }
     }
 }
