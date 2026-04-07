@@ -62,6 +62,7 @@ router.post(
     console.log("REQ BODY:", req.body);
 
     const { name, email, password, phone, territory, terms_accepted } = req.body;
+    const emailLower = email.trim().toLowerCase();
     const fullPhone = phone.startsWith('+') ? phone : `+92${phone}`;
 
     try {
@@ -124,7 +125,7 @@ router.post(
         .insert([
           {
             name,
-            email,
+            email: emailLower,
             password: hashedPassword,
             phone: fullPhone,
             territory,
@@ -171,7 +172,7 @@ router.post('/register/customer', async (req, res) => {
     const { data: customerData, error: customerError } = await supabase
       .from('customers')
       .insert([
-        { business_name, owner_name, email: finalEmail, password: hashedPassword, phone, address, business_type }
+        { business_name, owner_name, email: finalEmail.toLowerCase().trim(), password: hashedPassword, phone, address, business_type }
       ])
       .select();
 
