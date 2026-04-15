@@ -82,4 +82,20 @@ router.patch('/quotations/:id', verifyToken, (req, res) =>
     maintenanceController.updateQuotation(req, res)
 );
 
+router.patch('/inquiries/:id/confirm-delivery', verifyToken, (req, res) =>
+    maintenanceController.confirmDeliverySchedule(req, res)
+);
+
+router.patch('/inquiries/:id/reject-delivery', verifyToken, (req, res) =>
+    maintenanceController.rejectDeliverySchedule(req, res)
+);
+
+router.patch('/inquiries/:id/switch-partner', verifyToken, (req, res) =>
+    maintenanceController.switchPartner(req, res)
+);
+
+router.patch('/inquiries/:id/final-accept', verifyToken, (req, res) =>
+    maintenanceController.finalAcceptInquiry(req, res)
+);
+
 module.exports = router;

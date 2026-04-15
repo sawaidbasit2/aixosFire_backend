@@ -31,38 +31,109 @@ class MaintenanceService {
     /**
      * Partner accepts a pending inquiry (typically maintenance).
      */
-    async acceptInquiry(inquiryId, partnerId) {
+    async acceptInquiry(inquiryId, partnerId, payload = {}) {
         const inquiry = await this.getInquiryAccessRow(inquiryId);
-        if (!inquiry) {
-            return { ok: false, code: 404, message: 'Inquiry not found.' };
-        }
+        if (!inquiry) return { ok: false, code: 404, message: 'Inquiry not found.' };
         if (!this.partnerOwnsInquiry(inquiry, partnerId)) {
-            return { ok: false, code: 403, message: 'You do not have access to this inquiry.' };
+            return { ok: false, code: 403, message: 'Access denied.' };
         }
-        const status = (inquiry.status || '').toLowerCase();
-        if (status !== 'pending') {
-            return {
-                ok: false,
-                code: 400,
-                message: `Inquiry cannot be accepted in status "${inquiry.status}".`
-            };
+
+        const { delivery_mode, pickup_date, delivery_date, items } = payload;
+        const currentStatus = (inquiry.status || '').toLowerCase();
+
+        // 1. Update items if provided (Persistence for Problem 1)
+        if (Array.isArray(items) && items.length > 0) {
+            for (const item of items) {
+                const { error: itemErr } = await supabase
+                    .from('inquiry_items')
+                    .update({ 
+                        accepted_quantity: item.accepted_quantity,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('id', item.id)
+                    .eq('inquiry_id', inquiryId);
+                if (itemErr) throw itemErr;
+            }
+        }
+
+        // 2. Prepare inquiry update
+        // If partner is proposing dates, do NOT auto-accept (Problem 2)
+        const isProposing = delivery_mode === 'partner' && pickup_date;
+        
+        const updateData = {
+            updated_at: new Date().toISOString(),
+            delivery_mode: delivery_mode || inquiry.delivery_mode,
+            pickup_date: pickup_date || inquiry.pickup_date,
+            delivery_date: delivery_date || inquiry.delivery_date,
+        };
+
+        if (isProposing) {
+            updateData.delivery_status = 'pending';
+            // Status remains 'pending' or whatever it was
+        } else if (delivery_mode === 'agent') {
+            // If agent handles it, maybe auto-accept is fine or handles differently?
+            // User says "Inquiry should NOT auto accept". So let's keep it pending.
+            updateData.status = 'pending'; 
+            updateData.delivery_status = 'confirmed';
+        }
+
+        const { data, error } = await supabase
+            .from('inquiries')
+            .update(updateData)
+            .eq('id', inquiryId)
+            .select()
+            .maybeSingle();
+
+        if (error) throw error;
+
+        // 3. Notify agent if dates were proposed
+        if (isProposing) {
+            await supabase.from('notifications').insert({
+                sender_id: String(partnerId),
+                sender_role: 'partner',
+                recipient_id: String(inquiry.agent_id),
+                recipient_role: 'agent',
+                message: `Partner proposed pickup date for inquiry ${inquiryId}`,
+                type: "pickup_date_submitted",
+                inquiry_id: inquiryId
+            });
+        }
+
+        return { ok: true, data };
+    }
+
+    /**
+     * Final acceptance of inquiry by partner.
+     * Only allowed if agent confirmed the dates.
+     */
+    async finalAcceptInquiry(partnerId, inquiryId) {
+        const inquiry = await supabase
+            .from('inquiries')
+            .select('id, partner_id, status, delivery_status')
+            .eq('id', inquiryId)
+            .single();
+        
+        if (!inquiry.data) return { ok: false, code: 404, message: 'Inquiry not found.' };
+        if (String(inquiry.data.partner_id) !== String(partnerId)) {
+            return { ok: false, code: 403, message: 'Access denied.' };
+        }
+
+        if (inquiry.data.delivery_status !== 'agent_confirmed') {
+            return { ok: false, code: 400, message: 'Cannot accept until agent confirms dates.' };
         }
 
         const { data, error } = await supabase
             .from('inquiries')
             .update({
                 status: 'accepted',
+                delivery_status: 'partner_confirmed',
                 updated_at: new Date().toISOString()
             })
             .eq('id', inquiryId)
-            .eq('partner_id', partnerId)
             .select()
-            .maybeSingle();
+            .single();
 
         if (error) throw error;
-        if (!data) {
-            return { ok: false, code: 404, message: 'Inquiry not found.' };
-        }
         return { ok: true, data };
     }
 
@@ -471,6 +542,129 @@ class MaintenanceService {
             inquiry_id: existing.inquiry_id,
             type: 'quotation_update',
             title: `Quotation ${status}`
+        });
+
+        return { ok: true, data };
+    }
+    /**
+     * Agent confirms delivery schedule.
+     */
+    async confirmDeliverySchedule(agentId, inquiryId) {
+        const { data, error } = await supabase
+            .from('inquiries')
+            .update({
+                delivery_status: 'agent_confirmed',
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', inquiryId)
+            .eq('agent_id', agentId)
+            .select()
+            .maybeSingle();
+
+        if (error) throw error;
+        if (!data) return { ok: false, code: 404, message: 'Inquiry not found or not assigned to you.' };
+
+        // Notify partner
+        await supabase.from('notifications').insert({
+            sender_id: String(agentId),
+            sender_role: 'agent',
+            recipient_id: String(data.partner_id),
+            recipient_role: 'partner',
+            message: `Agent has confirmed your delivery schedule for inquiry ${inquiryId}.`,
+            inquiry_id: inquiryId
+        });
+
+        return { ok: true, data };
+    }
+
+    /**
+     * Agent rejects delivery schedule.
+     */
+    async rejectDeliverySchedule(agentId, inquiryId) {
+        const { data, error } = await supabase
+            .from('inquiries')
+            .update({
+                delivery_status: 'rejected',
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', inquiryId)
+            .eq('agent_id', agentId)
+            .select()
+            .maybeSingle();
+
+        if (error) throw error;
+        if (!data) return { ok: false, code: 404, message: 'Inquiry not found or not assigned to you.' };
+
+        // Notify partner
+        await supabase.from('notifications').insert({
+            sender_id: String(agentId),
+            sender_role: 'agent',
+            recipient_id: String(data.partner_id),
+            recipient_role: 'partner',
+            message: `Agent has rejected your delivery schedule for inquiry ${inquiryId}. Please propose new dates or contact the agent.`,
+            inquiry_id: inquiryId
+        });
+
+        return { ok: true, data };
+    }
+
+    /**
+     * Agent switches partner for an inquiry.
+     */
+    async switchPartner(agentId, inquiryId, payload) {
+        const { new_partner_id, reason } = payload;
+        if (!new_partner_id) return { ok: false, code: 400, message: 'new_partner_id is required.' };
+
+        const { data: oldData, error: fetchErr } = await supabase
+            .from('inquiries')
+            .select('partner_id, agent_id')
+            .eq('id', inquiryId)
+            .single();
+
+        if (fetchErr) throw fetchErr;
+        if (String(oldData.agent_id) !== String(agentId)) {
+            return { ok: false, code: 403, message: 'Only the assigned agent can switch partners.' };
+        }
+
+        const oldPartnerId = oldData.partner_id;
+
+        const { data, error } = await supabase
+            .from('inquiries')
+            .update({
+                partner_id: new_partner_id,
+                status: 'pending', // Reset to pending for new partner
+                delivery_mode: null,
+                pickup_date: null,
+                delivery_date: null,
+                delivery_status: 'pending',
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', inquiryId)
+            .select()
+            .maybeSingle();
+
+        if (error) throw error;
+
+        // Notify old partner
+        if (oldPartnerId) {
+            await supabase.from('notifications').insert({
+                sender_id: String(agentId),
+                sender_role: 'agent',
+                recipient_id: String(oldPartnerId),
+                recipient_role: 'partner',
+                message: `The agent has switched you out of inquiry ${inquiryId}. Reason: ${reason || 'N/A'}.`,
+                inquiry_id: inquiryId
+            });
+        }
+
+        // Notify new partner
+        await supabase.from('notifications').insert({
+            sender_id: String(agentId),
+            sender_role: 'agent',
+            recipient_id: String(new_partner_id),
+            recipient_role: 'partner',
+            message: `You have been assigned to a new inquiry ${inquiryId}. Please review and accept.`,
+            inquiry_id: inquiryId
         });
 
         return { ok: true, data };

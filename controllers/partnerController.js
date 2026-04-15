@@ -71,6 +71,27 @@ class PartnerController {
             });
         }
     }
+
+    /**
+     * Get all partners. Accessible by agents/admins.
+     */
+    async getAllPartners(req, res) {
+        try {
+            const partners = await partnerService.getAllPartners();
+            return res.status(200).json({
+                success: true,
+                data: partners,
+                error: null
+            });
+        } catch (error) {
+            console.error('[PartnerController] getAllPartners error:', error);
+            return res.status(500).json({
+                success: false,
+                data: null,
+                error: `Failed to fetch partners: ${error.message}`
+            });
+        }
+    }
 }
 
 module.exports = new PartnerController();

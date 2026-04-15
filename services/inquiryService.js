@@ -188,6 +188,15 @@ class InquiryService {
      */
     async createFullInquiry(inquiryData, items) {
         try {
+            const allHistoryDates = Array.from(new Set([
+                ...(inquiryData.follow_up_history || []),
+                ...(inquiryData.follow_up_date ? [inquiryData.follow_up_date] : [])
+            ]));
+
+            const latestFollowUp = allHistoryDates.length > 0
+                ? allHistoryDates.sort((a, b) => new Date(b) - new Date(a))[0]
+                : null;
+
             // 1. Create Inquiry
             const { data: inquiry, error: inquiryError } = await supabase
                 .from('inquiries')
@@ -201,7 +210,8 @@ class InquiryService {
                     status: 'pending',
                     priority: inquiryData.priority || 'Medium',
                     performed_by: inquiryData.performed_by || 'Agent',
-                    follow_up_date: inquiryData.follow_up_date || null
+                    follow_up_date: latestFollowUp || null,
+                    last_updated_follow_up_date: latestFollowUp || null
                 }])
                 .select()
                 .single();
@@ -209,6 +219,14 @@ class InquiryService {
             if (inquiryError) {
                 console.error('[InquiryService] createFullInquiry Step 1 (Inquiry) Error:', inquiryError);
                 throw inquiryError;
+            }
+
+            // Sync latest follow-up to Visit table if modern tracking is used
+            if (latestFollowUp && inquiryData.visit_id) {
+                await supabase
+                    .from('visits')
+                    .update({ last_updated_follow_up_date: latestFollowUp })
+                    .eq('id', inquiryData.visit_id);
             }
 
             const results = [];
@@ -260,7 +278,8 @@ class InquiryService {
                     maintenance_unit_photo_url: item.maintenance_unit_photo_url || null,
                     performed_by: item.performed_by || inquiryData.performed_by || 'Agent',
                     expiry_date: item.expiry_date || null,
-                    follow_up_date: item.follow_up_date || null,
+                    follow_up_date: latestFollowUp || null,
+                    last_updated_follow_up_date: latestFollowUp || null,
                     follow_up_date_validation: item.follow_up_date_validation || null,
                     validation_mode: item.validation_mode || 'new',
                     is_sub_unit: item.is_sub_unit || false,
@@ -278,6 +297,25 @@ class InquiryService {
                     console.error('[InquiryService] createFullInquiry Step 3 (Item) Error:', itemError);
                     throw itemError;
                 }
+
+                // Create follow-up history records
+                if (allHistoryDates.length > 0) {
+                    const historyRecords = allHistoryDates.map(date => ({
+                        inquiry_item_id: savedItem.id,
+                        follow_up_date: date,
+                        is_locked: true
+                    }));
+
+                    const { error: historyError } = await supabase
+                        .from('follow_up_history')
+                        .insert(historyRecords);
+
+                    if (historyError) {
+                        console.error('[InquiryService] createFullInquiry Step 4 (History) Error:', historyError);
+                        // We continue even if history fails, but log it
+                    }
+                }
+
                 results.push(savedItem);
             }
 

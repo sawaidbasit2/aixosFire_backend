@@ -15,7 +15,7 @@ class MaintenanceController {
         }
 
         try {
-            const result = await maintenanceService.acceptInquiry(id, userId);
+            const result = await maintenanceService.acceptInquiry(id, userId, req.body);
             if (!result.ok) {
                 return json(res, result.code, false, null, result.message);
             }
@@ -195,6 +195,85 @@ class MaintenanceController {
         } catch (error) {
             console.error('[MaintenanceController] updateQuotation:', error);
             return json(res, 500, false, null, error.message || 'Failed to update quotation.');
+        }
+    }
+    async confirmDeliverySchedule(req, res) {
+        const { id } = req.params;
+        const { id: userId, role } = req.user;
+
+        if (role !== 'agent') {
+            return json(res, 403, false, null, 'Only agents can confirm delivery schedules.');
+        }
+
+        try {
+            const result = await maintenanceService.confirmDeliverySchedule(userId, id);
+            if (!result.ok) {
+                return json(res, result.code, false, null, result.message);
+            }
+            return json(res, 200, true, result.data, null);
+        } catch (error) {
+            console.error('[MaintenanceController] confirmDeliverySchedule:', error);
+            return json(res, 500, false, null, error.message || 'Failed to confirm delivery schedule.');
+        }
+    }
+
+    async rejectDeliverySchedule(req, res) {
+        const { id } = req.params;
+        const { id: userId, role } = req.user;
+
+        if (role !== 'agent') {
+            return json(res, 403, false, null, 'Only agents can reject delivery schedules.');
+        }
+
+        try {
+            const result = await maintenanceService.rejectDeliverySchedule(userId, id);
+            if (!result.ok) {
+                return json(res, result.code, false, null, result.message);
+            }
+            return json(res, 200, true, result.data, null);
+        } catch (error) {
+            console.error('[MaintenanceController] rejectDeliverySchedule:', error);
+            return json(res, 500, false, null, error.message || 'Failed to reject delivery schedule.');
+        }
+    }
+
+    async switchPartner(req, res) {
+        const { id } = req.params;
+        const { id: userId, role } = req.user;
+
+        if (role !== 'agent') {
+            return json(res, 403, false, null, 'Only agents can switch partners.');
+        }
+
+        try {
+            const result = await maintenanceService.switchPartner(userId, id, req.body);
+            if (!result.ok) {
+                return json(res, result.code, false, null, result.message);
+            }
+            return json(res, 200, true, result.data, null);
+        } catch (error) {
+            console.error('[MaintenanceController] switchPartner:', error);
+            return json(res, 500, false, null, error.message || 'Failed to switch partner.');
+        }
+    }
+
+    async finalAcceptInquiry(req, res) {
+        const { id } = req.params;
+        const { id: userId, role } = req.user;
+
+        if (role !== 'partner') {
+            return json(res, 403, false, null, 'Only partners can accept inquiries.');
+        }
+
+        try {
+            const result = await maintenanceService.finalAcceptInquiry(userId, id);
+            if (!result.ok) {
+                return json(res, result.code, false, null, result.message);
+            }
+            return json(res, 200, true, result.data, null);
+        } catch (error) {
+            console.error('[MaintenanceController] finalAcceptInquiry:', error);
+            return json(res, 500, false, null, error.message || 'Failed to accept inquiry.');
         }
     }
 }

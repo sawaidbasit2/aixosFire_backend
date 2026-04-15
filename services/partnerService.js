@@ -75,6 +75,24 @@ class PartnerService {
             throw new Error(`Unable to fetch assigned units: ${error.message}`);
         }
     }
+
+    /**
+     * Get all active partners.
+     */
+    async getAllPartners() {
+        try {
+            const { data, error } = await supabase
+                .from('partners')
+                .select('id, business_name, email, phone')
+                .eq('status', 'active');
+
+            if (error) throw error;
+            return data || [];
+        } catch (error) {
+            console.error('[PartnerService] getAllPartners error:', error);
+            throw new Error(`Unable to fetch partners: ${error.message}`);
+        }
+    }
 }
 
 module.exports = new PartnerService();

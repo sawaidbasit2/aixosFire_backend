@@ -15,4 +15,10 @@ router.get('/dashboard', verifyToken, partnerController.getDashboard);
  */
 router.get('/stats', verifyToken, partnerController.getStats);
 
+/**
+ * GET /api/partners
+ * Fetch all active partners.
+ */
+router.get('/', verifyToken, partnerController.getAllPartners);
+
 module.exports = router;
