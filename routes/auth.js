@@ -129,7 +129,7 @@ router.post(
             password: hashedPassword,
             phone: fullPhone,
             territory,
-            status: 'Pending',
+            status: 'pending',
             profile_photo: profile_photo_url,
             residential_letter: residential_letter_url, // New field
             terms_accepted: terms_accepted === 'true',
@@ -290,8 +290,11 @@ router.post('/login', async (req, res) => {
     }
 
 
-    if (role === 'agent' && user.status !== 'Active') {
-      return res.status(403).json({ error: 'Account pending approval' });
+    if (role === 'agent') {
+      const s = (user.status || '').toLowerCase();
+      if (s !== 'accepted' && s !== 'active') {
+        return res.status(403).json({ error: 'Account pending approval' });
+      }
     }
 
     const token = jwt.sign({ id: user.id, role }, SECRET_KEY, { expiresIn: '24h' });
